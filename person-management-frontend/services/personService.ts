@@ -1,33 +1,30 @@
 import { Person, CreatePersonDto, UpdatePersonDto } from '@/types/person';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://localhost:7001/api';
+const API_BASE_URL = 'http://localhost:5296/api';
+
+class ApiError extends Error {
+  constructor(message: string, public status?: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
 
 class PersonService {
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'An error occurred');
+      const errorData = await response.json().catch(() => ({}));
+      throw new ApiError(errorData.message || 'An error occurred', response.status);
     }
     return response.json();
   }
 
   async getAllPersons(): Promise<Person[]> {
-    const response = await fetch(`${API_BASE_URL}/persons`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    const response = await fetch(`${API_BASE_URL}/persons`);
     return this.handleResponse<Person[]>(response);
   }
 
   async getPersonById(id: number): Promise<Person> {
-    const response = await fetch(`${API_BASE_URL}/persons/${id}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    const response = await fetch(`${API_BASE_URL}/persons/${id}`);
     return this.handleResponse<Person>(response);
   }
 
@@ -56,13 +53,10 @@ class PersonService {
   async deletePerson(id: number): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/persons/${id}`, {
       method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json',
-      },
     });
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'An error occurred');
+      const errorData = await response.json().catch(() => ({}));
+      throw new ApiError(errorData.message || 'Failed to delete person', response.status);
     }
   }
 }
