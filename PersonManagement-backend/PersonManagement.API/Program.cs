@@ -1,15 +1,23 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Mvc;
 using PersonManagement.Application.Interfaces;
 using PersonManagement.Application.Mappings;
 using PersonManagement.Application.Services;
 using PersonManagement.Domain.Interfaces;
 using PersonManagement.Infrastructure.Data;
 using PersonManagement.Infrastructure.Repositories;
+using PersonManagement.API.Middleware;
+using PersonManagement.API.Filters;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
+
 // Add services to the container
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    options.Filters.Add<ValidationFilter>();
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -42,15 +50,19 @@ builder.Services.AddCors(options =>
         });
 });
 
-var app = builder.Build();
 
+var app = builder.Build();
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Person Management API v1");
+        c.RoutePrefix = string.Empty; // Makes Swagger UI available at root
+    });
 }
-
+app.UseGlobalErrorHandling();
 app.UseHttpsRedirection();
 app.UseCors("AllowNextJS");
 app.UseAuthorization();
@@ -60,7 +72,14 @@ app.MapControllers();
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    dbContext.Database.Migrate();
+    try
+    {
+        dbContext.Database.Migrate();
+    }
+    catch (Exception ex)
+    {
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "An error occurred while migrating the database.");
+    }
 }
-
 app.Run();
