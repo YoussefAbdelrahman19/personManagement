@@ -4,50 +4,106 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import personService from '@/services/personService';
-import { Person } from '@/types/person';
+import { Person, UpdatePersonDto } from '@/types/person';
+import Swal from 'sweetalert2';
+import { toast } from 'react-toastify';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function PersonsPage() {
-  const [persons, setPersons] = useState<Person[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
+  const queryClient = useQueryClient();
+  const [loadingTimeout, setLoadingTimeout] = useState(false);
+
+  const { data: persons = [], isLoading, error } = useQuery<Person[], Error>({
+    queryKey: ['persons'],
+    queryFn: () => personService.getAllPersons(),
+    refetchOnWindowFocus: true,
+    refetchOnMount: true,
+    staleTime: 0,
+    gcTime: 0,
+  });
 
   useEffect(() => {
-    loadPersons();
-  }, []);
-
-  const loadPersons = async () => {
-    try {
-      setLoading(true);
-      const data = await personService.getAllPersons();
-      setPersons(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load persons');
-    } finally {
-      setLoading(false);
+    let timeout: NodeJS.Timeout;
+    if (isLoading) {
+      timeout = setTimeout(() => setLoadingTimeout(true), 5000);
+    } else {
+      setLoadingTimeout(false);
     }
-  };
+    return () => clearTimeout(timeout);
+  }, [isLoading]);
+
+  const deleteMutation = useMutation<void, Error, number, { previousPersons: Person[] | undefined }>({
+    mutationFn: (id: number) => personService.deletePerson(id),
+    onMutate: async (id) => {
+      // Cancel any outgoing refetches so they don't overwrite our optimistic update
+      await queryClient.cancelQueries({ queryKey: ['persons'] });
+      // Snapshot the previous value
+      const previousPersons = queryClient.getQueryData<Person[]>(['persons']);
+      // Optimistically update to the new value
+      queryClient.setQueryData<Person[]>(['persons'], (old) => old?.filter(p => p.personId !== id) || []);
+      // Return a context object with the snapshotted value
+      return { previousPersons };
+    },
+    onError: (err, id, context) => {
+      // If the mutation fails, use the context returned from onMutate to roll back
+      queryClient.setQueryData(['persons'], context?.previousPersons);
+      toast.error(err?.message || 'Failed to delete person', { position: 'top-right', autoClose: 2000 });
+    },
+    onSuccess: () => {
+      // Force a refetch to ensure the UI shows the most recent data
+      queryClient.invalidateQueries({ queryKey: ['persons'] });
+      toast.success('Person deleted successfully!', { position: 'top-right', autoClose: 2000 });
+    },
+  });
 
   const handleDelete = async (id: number) => {
-    if (confirm('Are you sure you want to delete this person?')) {
-      try {
-        await personService.deletePerson(id);
-        await loadPersons();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to delete person');
-      }
+    const result = await Swal.fire({
+      title: 'Are you sure?',
+      text: 'This action cannot be undone!',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Yes, delete it!',
+    });
+    if (result.isConfirmed) {
+      deleteMutation.mutate(id);
     }
   };
 
+  const router = useRouter();
   const handleEdit = (id: number) => {
     router.push(`/persons/edit/${id}`);
   };
 
-  if (loading) {
+  const updateMutation = useMutation<Person, Error, { id: number; data: UpdatePersonDto }, { previousPerson: Person | undefined }>({
+    mutationFn: ({ id, data }) => personService.updatePerson(id, data),
+    onMutate: async ({ id, data }) => {
+      await queryClient.cancelQueries({ queryKey: ['persons'] });
+      const previousPerson = queryClient.getQueryData<Person>(['persons', id]);
+      queryClient.setQueryData<Person>(['persons', id], (old) => old ? { ...old, ...data } as Person : undefined);
+      return { previousPerson };
+    },
+    onError: (err, variables, context) => {
+      queryClient.setQueryData(['persons', variables.id], context?.previousPerson);
+      toast.error(err?.message || 'Failed to update person', { position: 'top-right', autoClose: 2000 });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['persons'] });
+      toast.success('Person updated successfully!', { position: 'top-right', autoClose: 2000 });
+    },
+  });
+
+  if (isLoading) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="flex flex-col justify-center items-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+        <span className="text-gray-600">Loading persons...</span>
+        {loadingTimeout && (
+          <div className="mt-4 text-red-600 font-semibold">
+            Loading is taking longer than expected. Please check your connection or try reloading the page.
+          </div>
+        )}
       </div>
     );
   }
@@ -56,13 +112,23 @@ export default function PersonsPage() {
     return (
       <div className="container mx-auto px-4 py-8">
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          <p>{error}</p>
+          <p>{error instanceof Error ? error.message : 'Failed to load persons'}</p>
           <button
-            onClick={loadPersons}
+            onClick={() => queryClient.invalidateQueries({ queryKey: ['persons'] })}
             className="mt-2 bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
           >
             Retry
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!Array.isArray(persons)) {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          <p>Unexpected error: Data format is invalid.</p>
         </div>
       </div>
     );
@@ -115,7 +181,7 @@ export default function PersonsPage() {
                 </th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody>
               {persons.map((person) => (
                 <tr key={person.personId} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">

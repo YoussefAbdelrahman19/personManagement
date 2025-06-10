@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import personService from '@/services/personService';
 import { UpdatePersonDto } from '@/types/person';
+import { toast } from 'react-toastify';
 
 interface FormErrors {
   firstName?: string;
@@ -69,16 +70,20 @@ export default function EditPersonPage({ params }: { params: { id: string } }) {
     e.preventDefault();
 
     if (!validateForm()) {
+      toast.error('Please fix the errors in the form.', { position: 'top-right' });
       return;
     }
 
     try {
       setLoading(true);
       await personService.updatePerson(personId, formData);
-      router.push('/persons');
-    } catch (error) {
+      toast.success('Person updated successfully!', { position: 'top-right' });
+      setTimeout(() => {
+        router.push('/persons');
+      }, 1200);
+    } catch (error: any) {
       console.error('Error updating person:', error);
-      alert('Failed to update person. Please try again.');
+      toast.error(error?.message || 'Failed to update person. Please try again.', { position: 'top-right' });
     } finally {
       setLoading(false);
     }
